@@ -1,0 +1,35 @@
+name: Update Sector Data
+
+on:
+  schedule:
+    # Run Mon-Fri at 22:00 UTC (6am Taiwan time, before US market open)
+    - cron: '0 22 * * 1-5'
+    # Run Mon-Fri at 21:00 UTC (5am Taiwan, market pre-open)
+    - cron: '0 21 * * 1-5'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate sector data JSON
+        run: python generate_data.py
+
+      - name: Commit and push updated data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'data: auto-update sector money flow [skip ci]'
+          file_pattern: 'static/data/*.json'
+          branch: main
