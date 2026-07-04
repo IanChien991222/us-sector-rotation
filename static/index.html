@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>US Sector Rotation · 美股板塊輪動</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; }
+    #header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 12px 24px; background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+    #header h1 { font-size: 18px; font-weight: 700; }
+    #spy-badge {
+      padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600;
+      background: #21262d;
+    }
+    #spy-badge.up { color: #3fb950; }
+    #spy-badge.down { color: #f85149; }
+    #updated { font-size: 12px; color: #8b949e; margin-left: auto; }
+    #legend {
+      display: flex; gap: 20px; padding: 8px 24px;
+      background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+    #main { display: flex; }
+    #chart-container { flex: 1; height: calc(100vh - 80px); }
+    #sidebar {
+      width: 220px; background: #161b22; border-left: 1px solid #30363d;
+      padding: 16px; overflow-y: auto; height: calc(100vh - 80px);
+    }
+    #sidebar h3 { font-size: 13px; color: #8b949e; margin-bottom: 12px; text-transform: uppercase; }
+    .sector-card {
+      padding: 10px; border-radius: 8px; background: #21262d;
+      margin-bottom: 8px; cursor: pointer; transition: background 0.2s;
+    }
+    .sector-card:hover { background: #30363d; }
+    .sector-name { font-size: 13px; font-weight: 600; }
+    .sector-ticker { font-size: 11px; color: #8b949e; }
+    .sector-flow { font-size: 12px; margin-top: 4px; }
+    .flow-up { color: #3fb950; }
+    .flow-down { color: #f85149; }
+    #loading {
+      position: fixed; inset: 0; background: #0d1117;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; z-index: 999;
+    }
+    .axis-label {
+      position: absolute; font-size: 11px; color: #8b949e;
+    }
+  </style>
+</head>
+<body>
+<div id="loading">✟ Loading market data...</div>
+
+<div id="header">
+  <h1>🇺🇸 US Sector Rotation</h1>
+  <div id="spy-badge">—</div>
+  <span style="font-size:12px;color:#8b949e">圈國位置 = 近5日·圈大小 = 近20日累計資金流</span>
+  <span id="updated"></span>
+</div>
+
+<div id="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div>漲潮 Rising (資金加速流入)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f78166"></div>退潮 Falling (資金加速流出)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>輪動 Rotating (流入但放緩)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div>翻望 Watching (資金流出放緩)</div>
+</div>
+
+<div id="main">
+  <div id="chart-container"></div>
+  <div id="sidebar">
+    <h3>Sector Rankings</h3>
+    <div id="sector-list"></div>
+  </div>
+</div>
+
+<script>
+const API_BASE = '';
+const QUADRANT_COLORS = {
+  rising:   '#58a6ff',
+  falling:  '#f78166',
+  rotating: '#3fb950',
+  watching: '#d29922',
+};
+
+async function fetchData() {
+  const [sectorsRes, breadthRes] = await Promise.all([
+    fetch(API_BASE + '/api/sectors'),
+    fetch(API_BASE + '/api/market_breadth'),
+  ]);
+  return {
+    sectors: await sectorsRes.json(),
+    breadth: await breadthRes.json(),
+  };
+}
+
+function renderChart(sectors) {
+  const chart = echarts.init(document.getElementById('chart-container'), 'dark');
+
+  // Normalize bubble sizes
+  const sizes = sectors.map(s => s.size);
+  const maxSize = Math.max(...sizes);
+
+  const seriesData = sectors.map(s => ({
+    name: s.ticker,
+    value: [s.x, s.y, s.size, s.price_change_5d],
+    symbolSize: Math.max(30, Math.sqrt(s.size / maxSize) * 90),
+    itemStyle: {
+      color: QUADRANT_COLORS[s.quadrant] || '#58a6ff',
+      opacity: 0.85,
+    },
+    label: {
+      show: true,
+      formatter: () => s.ticker + '\n' + (s.price_change_5d >= 0 ? '+' : '') + s.price_change_5d.toFixed(1) + '%',
+      fontSize: 10,
+      color: '#fff',
+    },
+    extra: s,
+  }));
+
+  const option = {
+    backgroundColor: '#0d1117',
+    tooltip: {
+      trigger: 'item',
+      formatter: (p) => {
+        const s = p.data.extra;
+        return `<b>${s.ticker} — ${s.name}</b><br/>
+          Close: $${s.close}<br/>
+          5d Change: ${s.price_change_5d >= 0 ? '+' : ''}${s.price_change_5d}%<br/>
+          20d Change: ${s.price_change_20d >= 0 ? '+' : ''}${s.price_change_20d}%<br/>
+          Today Flow: $${s.x.toFixed(1)}M<br/>
+          5d Trend: $${s.y.toFixed(1)}M<br/>
+          Quadrant: <b>${s.quadrant.toUpperCase()}</b>`;
+      },
+    },
+    grid: { left: 80, right: 240, top: 40, bottom: 60 },
+    xAxis: {
+      type: 'value',
+      name: '← Money Outflow   |   Money Inflow → ($M/day)',
+      nameLocation: 'center',
+      nameGap: 40,
+      splitLine: { lineStyle: { color: '#21262d' } },
+      axisLine: { lineStyle: { color: '#30363d' } },
+      axisLabel: { color: '#8b949e', formatter: v => '$' + v.toFixed(0) + 'M' },
+    },
+    yAxis: {
+      type: 'value',
+      name: '↑ 5-day Trend',
+      nameLocation: 'center',
+      nameGap: 55,
+      splitLine: { lineStyle: { color: '#21262d' } },
+      axisLine: { lineStyle: { color: '#30363d' } },
+      axisLabel: { color: '#8b949e', formatter: v => '$' + v.toFixed(0) + 'M' },
+    },
+    series: [{
+      type: 'scatter',
+      data: seriesData,
+      label: { show: true },
+      emphasis: { scale: 1.2 },
+    }],
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+  return chart;
+}
+
+function renderSidebar(sectors) {
+  const sorted = [...sectors].sort((a, b) => b.x - a.x);
+  const list = document.getElementById('sector-list');
+  list.innerHTML = sorted.map(s => `
+    <div class="sector-card">
+      <div class="sector-name">${s.name_zh} ${s.name}</div>
+      <div class="sector-ticker">${s.ticker} &nbsp; $${s.close}</div>
+      <div class="sector-flow ${s.x >= 0 ? 'flow-up' : 'flow-down'}">
+        ${s.x >= 0 ? '+' : ''}$${s.x.toFixed(1)}M today
+      </div>
+      <div class="sector-flow ${s.price_change_5d >= 0 ? 'flow-up' : 'flow-down'}" style="font-size:11px">
+        ${s.price_change_5d >= 0 ? '+' : ''}${s.price_change_5d}% (5d)
+      </div>
+    </div>`).join('');
+}
+
+async function init() {
+  try {
+    const { sectors, breadth } = await fetchData();
+
+    const badge = document.getElementById('spy-badge');
+    const change = breadth.spy_change;
+    badge.textContent = 'S&P 500 ' + (change >= 0 ? '+' : '') + change + '%';
+    badge.className = change >= 0 ? 'up' : 'down';
+
+    document.getElementById('updated').textContent = 'Updated: ' + sectors.updated_at;
+
+    renderChart(sectors.sectors);
+    renderSidebar(sectors.sectors);
+  } catch(e) {
+    document.getElementById('loading').textContent = '⚠️ Failed to load data. Is the API server running?';
+    return;
+  }
+  document.getElementById('loading').style.display = 'none';
+}
+
+init();
+setInterval(init, 5 * 60 * 1000); // auto-refresh every 5 min
+</script>
+</body>
+</html>
